@@ -1,0 +1,161 @@
+---
+title: "AmazonEmployeeAccess"
+author: "Kelson Jensen"
+format: pdf
+editor: visual
+---
+
+
+
+# Amazon Employee Access
+
+## Libraries Needed
+
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(vroom)
+library(dplyr)
+library(ggplot2)
+```
+
+
+
+## Read in the data
+
+
+
+```{r}
+base_path <- "C:/Users/User/OneDrive - Brigham Young University/Fall 2025/STAT 348/AmazonEmployeAccess/amazon-employee-access-challenge"
+
+test  <- vroom::vroom(file.path(base_path, "test.csv"),  delim = ",", na = c("", "NA"), progress = FALSE)
+train <- vroom::vroom(file.path(base_path, "train.csv"), delim = ",", na = c("", "NA"), progress = FALSE)
+
+```
+
+
+
+## EDA
+
+
+
+```{r}
+response_var <- "ACTION"
+id_cols <- c("ID","Id","RowId","ROW_ID","row_id") %>% intersect(names(train))
+pred_cols <- setdiff(names(train), c(response_var, id_cols))
+
+# treat all predictors as categorical (no renaming)
+train <- train %>% mutate(across(all_of(pred_cols), ~ as.factor(.x)),
+                          !!response_var := as.factor(.data[[response_var]]))
+test  <- test  %>% mutate(across(all_of(pred_cols), ~ as.factor(.x)))
+
+# ── EDA PLOT 1: class balance ─────────────────────────────────────────────────
+ggplot(train, aes(x = .data[[response_var]])) +
+  geom_bar() +
+  labs(title = "Class counts for ACTION", x = "ACTION", y = "Count")
+
+# ── EDA PLOT 2: approval rate by a role-like field (keeps original names) ─────
+role_candidate <- c("ROLE_TITLE", "ROLE_DEPTNAME", "ROLE_FAMILY", "ROLE_CODE") %>%
+  intersect(names(train)) %>% .[1]
+
+plot_df <- train %>%
+  mutate(ACTION_num = as.numeric(as.character(.data[[response_var]]))) %>%
+  group_by(.data[[role_candidate]]) %>%
+  summarise(n = n(),
+            approve_rate = mean(ACTION_num, na.rm = TRUE),
+            .groups = "drop") %>%
+  slice_max(n, n = 15) %>%
+  mutate(!!role_candidate := fct_reorder(.data[[role_candidate]], approve_rate))
+
+ggplot(plot_df, aes(x = .data[[role_candidate]], y = approve_rate)) +
+  geom_col() +
+  coord_flip() +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(title = paste("Approval rate by", role_candidate, "(top 15 by count)"),
+       x = role_candidate, y = "Approval rate")
+```
+
+
+
+## Recipe
+
+
+
+```{r}
+rFormula <- ACTION ~ .
+
+# ── Dummy-encoding recipe (with <0.1% lumping). This is the one that matches your assignment. ──
+my_recipe <- recipe(ACTION ~ ., data = train) %>% 
+  step_mutate(across(everything(), as.factor)) %>%
+  step_other (all_nominal_predictors(), threshold = 0.001) %>%
+  step_dummy (all_nominal_predictors())
+
+
+
+# prep & bake
+prep_obj    <- prep(my_recipe, training = train, verbose = TRUE)
+train_baked <- bake(prep_obj, new_data = train)
+ncol(train_baked)
+```
+
+
+
+## Logistic Regression
+
+
+
+```{r}
+logregmodel <- logistic_reg() %>% 
+  set_engine('glm')
+
+log_wf <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(logregmodel) %>% 
+  fit(data = train)
+
+amazon_predictions <- predict(log_wf, 
+                              new_data=test, 
+                              type="prob") 
+
+submission <- bind_cols(test 
+                        %>% select(id),
+                        amazon_predictions %>% 
+                          transmute(ACTION = .pred_1)) %>%
+  drop_na(ACTION)
+vroom_write(x=submission, file = "./amazon_preds.csv", delim = ",")
+```
+
+
+
+## Penalized Logistic Regression
+
+
+
+```{r}
+pen_model <- logistic_reg(mixture = , penalty = ) %>% 
+  set_engine('glmnet')
+
+pen_wf <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(pen_model)
+
+tuning_grid <- grid_regular(penalty(),
+                            mixture(),
+                            levels = L)
+
+folds <- vfold_cv(train, v = 10, repeats = 1)
+
+cv_results <- pen_wf %>% 
+  tune_grid(resamples = folds,
+            grid = tuning_grid,
+            metrics = metric_set(roc_auc, f_meas, recall, spec, precision, accuracy))
+
+besttune <- cv_results %>% 
+  select_best('roc_auc')
+
+final_wf <- preg_wf %>% 
+  finalize_workflow(besttune)
+```
+
