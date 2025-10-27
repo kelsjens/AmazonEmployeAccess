@@ -16,95 +16,95 @@ cl <- makeCluster(n_cores)
 doParallel::registerDoParallel(cl)
 
 
-test  <- vroom("./amazon-employee-access-challenge/test.csv",  delim = ",")
-train <- vroom("./amazon-employee-access-challenge/train.csv", delim = ",")
+test  <- vroom("./AmazonEmployeAccess/amazon-employee-access-challenge/test.csv",  delim = ",")
+train <- vroom("./AmazonEmployeAccess/amazon-employee-access-challenge/train.csv", delim = ",")
 
 
 
-# # ── Dummy-encoding recipe (with <0.1% lumping). This is the one that matches your assignment. ──
-# my_recipe <- recipe(ACTION ~ ., data = train) %>% 
-#   step_mutate(across(everything(), as.factor)) %>%
-#   step_other (all_nominal_predictors(), threshold = 0.001) %>%
-#   step_dummy (all_nominal_predictors())
-# 
-# 
-# 
-# # prep & bake
-# prep_obj    <- prep(my_recipe, training = train, verbose = TRUE)
-# train_baked <- bake(prep_obj, new_data = train)
-# ncol(train_baked)
-# 
-# 
-# logregmodel <- logistic_reg() %>% 
-#   set_engine('glm')
-# 
-# log_wf <- workflow() %>% 
-#   add_recipe(my_recipe) %>% 
-#   add_model(logregmodel) %>% 
-#   fit(data = train)
-# 
-# amazon_predictions <- predict(log_wf, 
-#                               new_data=test, 
-#                               type="prob") 
-# 
-# submission <- bind_cols(test 
-#                         %>% select(id),
-#                         amazon_predictions %>% 
-#                           transmute(ACTION = .pred_1)) %>%
-#   drop_na(ACTION)
-# vroom_write(x=submission, file = "./Logistic_amazon_preds.csv", delim = ",")
-# 
+# ── Dummy-encoding recipe (with <0.1% lumping). This is the one that matches your assignment. ──
+my_recipe <- recipe(ACTION ~ ., data = train) %>%
+  step_mutate(across(everything(), as.factor)) %>%
+  step_other (all_nominal_predictors(), threshold = 0.001) %>%
+  step_dummy (all_nominal_predictors())
+
+
+
+# prep & bake
+prep_obj    <- prep(my_recipe, training = train, verbose = TRUE)
+train_baked <- bake(prep_obj, new_data = train)
+ncol(train_baked)
+
+
+logregmodel <- logistic_reg() %>%
+  set_engine('glm')
+
+log_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(logregmodel) %>%
+  fit(data = train)
+
+amazon_predictions <- predict(log_wf,
+                              new_data=test,
+                              type="prob")
+
+submission <- bind_cols(test
+                        %>% select(id),
+                        amazon_predictions %>%
+                          transmute(ACTION = .pred_1)) %>%
+  drop_na(ACTION)
+vroom_write(x=submission, file = "./Logistic_amazon_preds.csv", delim = ",")
+
 
 
 
 
 # Penalized regression
 
-# my_recipe <- recipe(ACTION ~ ., data = train) %>%
-#   step_mutate(across(everything(), as.factor)) %>%
-#   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
-#   step_novel(all_nominal_predictors(), new_level = "new") %>%
-#   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
-# 
-# pen_model <- logistic_reg(mixture = tune(), penalty = tune()) %>% 
-#   set_engine('glmnet')
-# 
-# pen_wf <- workflow() %>% 
-#   add_recipe(my_recipe) %>% 
-#   add_model(pen_model)
-# 
-# tuning_grid <- grid_regular(penalty(),
-#                             mixture(),
-#                             levels = 10)
-# 
-# folds <- vfold_cv(train, v = 10, repeats = 1)
-# 
-# cv_results <- pen_wf %>% 
-#   tune_grid(resamples = folds,
-#             grid = tuning_grid,
-#             metrics = metric_set(roc_auc))
-# 
-# besttune <- cv_results %>% 
-#   select_best(metric = 'roc_auc')
-# 
-# final_wf <- pen_wf %>% 
-#   finalize_workflow(besttune) %>% 
-#   fit(data = train)
-# 
-# final_wf %>% 
-#   predict(new_data = test, type = "prob")
-# 
-# amazon_predictions <- predict(final_wf, 
-#                               new_data=test, 
-#                               type="prob") 
-# submission <- bind_cols(test 
-#                         %>% select(id),
-#                         amazon_predictions %>% 
-#                           transmute(ACTION = .pred_1)) %>%
-#   drop_na(ACTION)
-# vroom_write(x=submission, file = "./Penalized_amazon_preds.csv", delim = ",")
-# 
-# 
+my_recipe <- recipe(ACTION ~ ., data = train) %>%
+  step_mutate(across(everything(), as.factor)) %>%
+  step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
+  step_novel(all_nominal_predictors(), new_level = "new") %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
+
+pen_model <- logistic_reg(mixture = tune(), penalty = tune()) %>%
+  set_engine('glmnet')
+
+pen_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(pen_model)
+
+tuning_grid <- grid_regular(penalty(),
+                            mixture(),
+                            levels = 10)
+
+folds <- vfold_cv(train, v = 10, repeats = 1)
+
+cv_results <- pen_wf %>%
+  tune_grid(resamples = folds,
+            grid = tuning_grid,
+            metrics = metric_set(roc_auc))
+
+besttune <- cv_results %>%
+  select_best(metric = 'roc_auc')
+
+final_wf <- pen_wf %>%
+  finalize_workflow(besttune) %>%
+  fit(data = train)
+
+final_wf %>%
+  predict(new_data = test, type = "prob")
+
+amazon_predictions <- predict(final_wf,
+                              new_data=test,
+                              type="prob")
+submission <- bind_cols(test
+                        %>% select(id),
+                        amazon_predictions %>%
+                          transmute(ACTION = .pred_1)) %>%
+  drop_na(ACTION)
+vroom_write(x=submission, file = "./Penalized_amazon_preds.csv", delim = ",")
+
+
 
 
 # Random Forest Code
@@ -170,57 +170,57 @@ vroom_write(x = submission, file = "./Forest_amazon_preds.csv", delim = ",")
 
 
 
-# # KNN Analysis
-# my_recipe <- recipe(ACTION ~ ., data = train) %>%
-#   step_mutate(across(everything(), as.factor)) %>%
-#   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
-#   step_novel(all_nominal_predictors(), new_level = "new") %>%
-#   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
-# 
-# 
-# knn_model <- nearest_neighbor(neighbors = tune()) %>% 
-#   set_mode("classification") %>% 
-#   set_engine("kknn")
-# 
-# knn_wf <- workflow() %>% 
-#   add_recipe(my_recipe) %>% 
-#   add_model(knn_model)
-# 
-# # KNN tunes 'neighbors' (not mtry/min_n). Keep levels the same.
-# tuning_grid <- grid_regular(
-#   neighbors(range = c(1, 75)),
-#   levels = 10
-# )
-# 
-# folds <- vfold_cv(train, v = 10, repeats = 1)
-# 
-# cv_results <- knn_wf %>% 
-#   tune_grid(
-#     resamples = folds,
-#     grid = tuning_grid,
-#     metrics = metric_set(roc_auc)
-#   )
-# 
-# besttune <- cv_results %>% 
-#   select_best(metric = "roc_auc")
-# 
-# final_wf <- knn_wf %>% 
-#   finalize_workflow(besttune) %>% 
-#   fit(data = train)
-# 
-# # Use the finalized workflow to predict
-# amazon_predictions <- final_wf %>% 
-#   predict(new_data = test, type = "prob")
-# 
-# submission <- bind_cols(
-#   test %>% select(id),
-#   amazon_predictions %>% transmute(ACTION = .pred_1)
-# ) %>% 
-#   drop_na(ACTION)
-# 
-# vroom_write(x = submission, file = "./KNN_amazon_preds.csv", delim = ",")
-# 
-# 
+# KNN Analysis
+my_recipe <- recipe(ACTION ~ ., data = train) %>%
+  step_mutate(across(everything(), as.factor)) %>%
+  step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
+  step_novel(all_nominal_predictors(), new_level = "new") %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
+
+
+knn_model <- nearest_neighbor(neighbors = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kknn")
+
+knn_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(knn_model)
+
+# KNN tunes 'neighbors' (not mtry/min_n). Keep levels the same.
+tuning_grid <- grid_regular(
+  neighbors(range = c(1, 75)),
+  levels = 10
+)
+
+folds <- vfold_cv(train, v = 10, repeats = 1)
+
+cv_results <- knn_wf %>%
+  tune_grid(
+    resamples = folds,
+    grid = tuning_grid,
+    metrics = metric_set(roc_auc)
+  )
+
+besttune <- cv_results %>%
+  select_best(metric = "roc_auc")
+
+final_wf <- knn_wf %>%
+  finalize_workflow(besttune) %>%
+  fit(data = train)
+
+# Use the finalized workflow to predict
+amazon_predictions <- final_wf %>%
+  predict(new_data = test, type = "prob")
+
+submission <- bind_cols(
+  test %>% select(id),
+  amazon_predictions %>% transmute(ACTION = .pred_1)
+) %>%
+  drop_na(ACTION)
+
+vroom_write(x = submission, file = "./KNN_amazon_preds.csv", delim = ",")
+
+
 
 
 
@@ -276,7 +276,68 @@ nb_probs <- predict(nb_final_wf, new_data = myNewData, type = "prob")
 submission <- bind_cols(
   test %>% select(id),
   nb_probs %>% transmute(ACTION = .pred_1)
-) %>% 
+) %>%
   drop_na(ACTION)
 
 vroom_write(x = submission, file = "./bayes_amazon_preds.csv", delim = ",")
+
+
+
+
+
+# 
+# 
+# # MLP 
+# # Make sure outcome is a factor
+# train <- train %>% mutate(ACTION = factor(ACTION))
+# 
+# # columns from your screenshot (treated as categorical codes)
+# cat_cols <- c(
+#   "RESOURCE","MGR_ID","ROLE_ROLLUP_1","ROLE_ROLLUP_2","ROLE_DEPTNAME",
+#   "ROLE_TITLE","ROLE_FAMILY_DESC","ROLE_FAMILY","ROLE_CODE"
+# )
+# 
+# # --- recipe ---
+# nn_recipe <- recipe(ACTION ~ ., data = train) %>%
+#   # turn those code-like numeric columns into factors, then dummy encode
+#   step_mutate(across(all_of(cat_cols), factor)) %>%
+#   step_dummy(all_nominal_predictors()) %>%
+#   step_range(all_numeric_predictors(), min = 0, max = 1)
+# 
+# # --- model ---
+# nn_model <- mlp(
+#   hidden_units = tune(),
+#   epochs = 50
+# ) %>%
+#   set_engine("keras", verbose = 0) %>%
+#   set_mode("classification")
+# 
+# # --- workflow ---
+# nn_wf <- workflow() %>%
+#   add_recipe(nn_recipe) %>%
+#   add_model(nn_model)
+# 
+# # --- tuning grid ---
+# maxHiddenUnits <- 64
+# nn_tuneGrid <- grid_regular(
+#   hidden_units(range = c(1, maxHiddenUnits)),
+#   levels = 10
+# )
+# 
+# # --- resamples ---
+# folds <- vfold_cv(train, v = 5, strata = ACTION)
+# 
+# # --- tune ---
+# tuned_nn <- nn_wf %>%
+#   tune_grid(
+#     resamples = folds,
+#     grid = nn_tuneGrid,
+#     metrics = metric_set(accuracy, roc_auc)
+#   )
+# 
+# # --- inspect accuracy vs hidden units ---
+# tuned_nn %>%
+#   collect_metrics() %>%
+#   dplyr::filter(.metric == "accuracy") %>%
+#   ggplot(aes(x = hidden_units, y = mean)) +
+#   geom_l

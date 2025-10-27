@@ -333,3 +333,78 @@ submission <- bind_cols(
 vroom_write(x = submission, file = "./bayes_amazon_preds.csv", delim = ",")
 
 ```
+
+# MLP
+
+```{r}
+# libs
+# install.packages(c("tidymodels","keras","dplyr"))
+library(tidymodels)
+library(dplyr)
+
+# Make sure outcome is a factor
+train <- train %>% mutate(ACTION = factor(ACTION))
+
+# columns from your screenshot (treated as categorical codes)
+cat_cols <- c(
+  "RESOURCE","MGR_ID","ROLE_ROLLUP_1","ROLE_ROLLUP_2","ROLE_DEPTNAME",
+  "ROLE_TITLE","ROLE_FAMILY_DESC","ROLE_FAMILY","ROLE_CODE"
+)
+
+# --- recipe ---
+nn_recipe <- recipe(ACTION ~ ., data = train) %>%
+  # turn those code-like numeric columns into factors, then dummy encode
+  step_mutate(across(all_of(cat_cols), factor)) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_range(all_numeric_predictors(), min = 0, max = 1)
+
+# --- model ---
+nn_model <- mlp(
+  hidden_units = tune(),
+  epochs = 50
+) %>%
+  set_engine("keras", verbose = 0) %>%
+  set_mode("classification")
+
+# --- workflow ---
+nn_wf <- workflow() %>%
+  add_recipe(nn_recipe) %>%
+  add_model(nn_model)
+
+# --- tuning grid ---
+maxHiddenUnits <- 64
+nn_tuneGrid <- grid_regular(
+  hidden_units(range = c(1, maxHiddenUnits)),
+  levels = 10
+)
+
+# --- resamples ---
+folds <- vfold_cv(train, v = 5, strata = ACTION)
+
+# --- tune ---
+tuned_nn <- nn_wf %>%
+  tune_grid(
+    resamples = folds,
+    grid = nn_tuneGrid,
+    metrics = metric_set(accuracy, roc_auc)
+  )
+
+# --- inspect accuracy vs hidden units ---
+tuned_nn %>%
+  collect_metrics() %>%
+  dplyr::filter(.metric == "accuracy") %>%
+  ggplot(aes(x = hidden_units, y = mean)) +
+  geom_line()
+
+```
+
+# PCA recipe
+
+```{r}
+my_recipe <- recipe(ACTION ~ ., data = train) %>%
+  step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
+  step_novel(all_nominal_predictors(), new_level = "new") %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION)) %>% 
+  step_normalize(all_predictors()) %>% 
+  step_pca(all_predictors(), threshold = .75)
+```
