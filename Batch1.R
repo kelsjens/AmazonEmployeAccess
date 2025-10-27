@@ -108,115 +108,119 @@ train <- vroom("./amazon-employee-access-challenge/train.csv", delim = ",")
 
 
 # Random Forest Code
-# my_recipe <- recipe(ACTION ~ ., data = train) %>%
-#   step_mutate(across(everything(), as.factor)) %>%
-#   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>% 
-#   step_novel(all_nominal_predictors(), new_level = "new") %>%
-#   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
-# 
-# forest_mod <- rand_forest(mtry = tune(),
-#                           min_n = tune(),
-#                           trees = 1000) %>% 
-#   set_engine("ranger") %>% 
-#   set_mode("classification")
-# 
-# forest_wf <- workflow() %>% 
-#   add_recipe(my_recipe) %>% 
-#   add_model(forest_mod)
-# 
-# tuning_grid <- grid_regular(mtry(range = c(1, 1049)),
-#                             min_n(),
-#                             levels = 10)
-# 
-# folds <- vfold_cv(train, v = 10, repeats = 1)
-# 
-# cv_results <- forest_wf %>% 
-#   tune_grid(resamples = folds,
-#             grid = tuning_grid,
-#             metrics = metric_set(roc_auc))
-# 
-# besttune <- cv_results %>% 
-#   select_best(metric = "roc_auc")
-# 
-# final_wf <- forest_wf %>% 
-#   finalize_workflow(besttune) %>% 
-#   fit(data = train)
-# 
-# final_wf %>% 
-#   predict(new_data = test, type = "prob")
-# 
-# amazon_predictions <- predict(final_wf, 
-#                               new_data = test, 
-#                               type = "prob")
-# 
-# submission <- bind_cols(
-#   test %>% select(id),
-#   amazon_predictions %>% transmute(ACTION = .pred_1)
-# ) %>%
-#   drop_na(ACTION)
-# 
-# vroom_write(x = submission, file = "./Forest_amazon_preds.csv", delim = ",")
+train <- train %>% mutate(ACTION = factor(ACTION, levels = c(1, 0)))
 
+# (Optional but recommended) stratified CV so class imbalance doesn’t break folds
+folds <- vfold_cv(train, v = 5, repeats = 1, strata = ACTION)
 
-
-
-
-
-
-
-
-
-# KNN Analysis
+# 2) Recipe: do NOT turn everything into factors
 my_recipe <- recipe(ACTION ~ ., data = train) %>%
-  step_mutate(across(everything(), as.factor)) %>%
   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
   step_novel(all_nominal_predictors(), new_level = "new") %>%
   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
 
+forest_mod <- rand_forest(mtry = tune(),
+                          min_n = tune(),
+                          trees = 500) %>%
+  set_engine("ranger") %>%
+  set_mode("classification")
 
-knn_model <- nearest_neighbor(neighbors = tune()) %>% 
-  set_mode("classification") %>% 
-  set_engine("kknn")
+forest_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(forest_mod)
 
-knn_wf <- workflow() %>% 
-  add_recipe(my_recipe) %>% 
-  add_model(knn_model)
-
-# KNN tunes 'neighbors' (not mtry/min_n). Keep levels the same.
+# 3) Build a safe grid
+# mtry must be <= # predictors after the recipe; keep your small demo grid but valid syntax
 tuning_grid <- grid_regular(
-  neighbors(range = c(1, 75)),
-  levels = 10
+  mtry(range = c(1, 9)),
+  min_n(range = c(1, 9)),
+  levels = 9
 )
 
-folds <- vfold_cv(train, v = 10, repeats = 1)
-
-cv_results <- knn_wf %>% 
+cv_results <- forest_wf %>%
   tune_grid(
     resamples = folds,
     grid = tuning_grid,
-    metrics = metric_set(roc_auc)
+    metrics = metric_set(roc_auc)   # uses level "1" as event
   )
 
-besttune <- cv_results %>% 
+besttune <- cv_results %>%
   select_best(metric = "roc_auc")
 
-final_wf <- knn_wf %>% 
-  finalize_workflow(besttune) %>% 
+final_wf <- forest_wf %>%
+  finalize_workflow(besttune) %>%
   fit(data = train)
 
-# Use the finalized workflow to predict
-amazon_predictions <- final_wf %>% 
-  predict(new_data = test, type = "prob")
+amazon_predictions <- predict(final_wf, new_data = test, type = "prob")
 
 submission <- bind_cols(
   test %>% select(id),
   amazon_predictions %>% transmute(ACTION = .pred_1)
-) %>% 
+) %>%
   drop_na(ACTION)
 
-vroom_write(x = submission, file = "./KNN_amazon_preds.csv", delim = ",")
+vroom_write(x = submission, file = "./Forest_amazon_preds.csv", delim = ",")
 
 
+
+
+
+
+
+
+
+
+# # KNN Analysis
+# my_recipe <- recipe(ACTION ~ ., data = train) %>%
+#   step_mutate(across(everything(), as.factor)) %>%
+#   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
+#   step_novel(all_nominal_predictors(), new_level = "new") %>%
+#   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
+# 
+# 
+# knn_model <- nearest_neighbor(neighbors = tune()) %>% 
+#   set_mode("classification") %>% 
+#   set_engine("kknn")
+# 
+# knn_wf <- workflow() %>% 
+#   add_recipe(my_recipe) %>% 
+#   add_model(knn_model)
+# 
+# # KNN tunes 'neighbors' (not mtry/min_n). Keep levels the same.
+# tuning_grid <- grid_regular(
+#   neighbors(range = c(1, 75)),
+#   levels = 10
+# )
+# 
+# folds <- vfold_cv(train, v = 10, repeats = 1)
+# 
+# cv_results <- knn_wf %>% 
+#   tune_grid(
+#     resamples = folds,
+#     grid = tuning_grid,
+#     metrics = metric_set(roc_auc)
+#   )
+# 
+# besttune <- cv_results %>% 
+#   select_best(metric = "roc_auc")
+# 
+# final_wf <- knn_wf %>% 
+#   finalize_workflow(besttune) %>% 
+#   fit(data = train)
+# 
+# # Use the finalized workflow to predict
+# amazon_predictions <- final_wf %>% 
+#   predict(new_data = test, type = "prob")
+# 
+# submission <- bind_cols(
+#   test %>% select(id),
+#   amazon_predictions %>% transmute(ACTION = .pred_1)
+# ) %>% 
+#   drop_na(ACTION)
+# 
+# vroom_write(x = submission, file = "./KNN_amazon_preds.csv", delim = ",")
+# 
+# 
 
 
 
@@ -241,17 +245,14 @@ nb_wf <- workflow() %>%
   add_model(nb_model)
 
 ## Re samples
-folds <- vfold_cv(train, v = 10)
+folds <- vfold_cv(train, v = 5)
 
 ## Tune smoothness and Laplace
 # Build parameter set from the model then set reasonable ranges
-nb_params <- parameters(nb_model) %>%
-  update(
-    smoothness = smoothness(c(0, 2)),  # adjust if you like
-    Laplace    = Laplace(c(0, 5))
-  )
 
-tune_grid_nb <- grid_regular(nb_params, levels = 10)
+tune_grid_nb <- grid_regular(Laplace(range = c(0,1)),
+                             smoothness(.1,2),
+                             levels = 10)
 
 nb_res <- nb_wf %>%
   tune_grid(

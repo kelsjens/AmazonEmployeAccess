@@ -14,10 +14,13 @@ library(tidyverse)
 library(tidymodels)
 library(vroom)
 library(dplyr)
+library(tune)
 library(ggplot2)
 library(embed)
 library(doParallel)
 library(kknn)
+library(discrim)
+library(remotes)
 ```
 
 ## Read in the data
@@ -167,56 +170,58 @@ vroom_write(x=submission, file = "./amazon_preds.csv", delim = ",")
 # Random Binary Forest
 
 ```{r}
+train <- train %>% mutate(ACTION = factor(ACTION, levels = c(1, 0)))
+
+# (Optional but recommended) stratified CV so class imbalance doesn’t break folds
+folds <- vfold_cv(train, v = 5, repeats = 1, strata = ACTION)
+
+# 2) Recipe: do NOT turn everything into factors
 my_recipe <- recipe(ACTION ~ ., data = train) %>%
-  step_mutate(across(all_numeric_predictors(), as.factor)) %>%
-  step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>% 
+  step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
   step_novel(all_nominal_predictors(), new_level = "new") %>%
   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
 
-
 forest_mod <- rand_forest(mtry = tune(),
                           min_n = tune(),
-                          trees = 1000) %>% 
-  set_engine("ranger") %>% 
+                          trees = 500) %>%
+  set_engine("ranger") %>%
   set_mode("classification")
 
-
-
-
-forest_wf <- workflow() %>% 
-  add_recipe(my_recipe) %>% 
+forest_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
   add_model(forest_mod)
 
-tuning_grid <- grid_regular(mtry(range = c(1,ncol(test))),
-                            min_n(),
-                            levels = 10)
+# 3) Build a safe grid
+# mtry must be <= # predictors after the recipe; keep your small demo grid but valid syntax
+tuning_grid <- grid_regular(
+  mtry(range = c(1, 3)),
+  min_n(range = c(1, 3)),
+  levels = 3
+)
 
-folds <- vfold_cv(train, v = 10, repeats = 1)
+cv_results <- forest_wf %>%
+  tune_grid(
+    resamples = folds,
+    grid = tuning_grid,
+    metrics = metric_set(roc_auc)   # uses level "1" as event
+  )
 
-cv_results <- forest_wf %>% 
-  tune_grid(resamples = folds,
-            grid = tuning_grid,
-            metrics = metric_set(roc_auc))
+besttune <- cv_results %>%
+  select_best(metric = "roc_auc")
 
-besttune <- cv_results %>% 
-  select_best(metric = 'roc_auc')
-
-final_wf <- forest_wf %>% 
-  finalize_workflow(besttune) %>% 
+final_wf <- forest_wf %>%
+  finalize_workflow(besttune) %>%
   fit(data = train)
 
-final_wf %>% 
-  predict(new_data = test, type = "prob")
+amazon_predictions <- predict(final_wf, new_data = test, type = "prob")
 
-amazon_predictions <- predict(final_wf, 
-                              new_data=test, 
-                              type="prob") 
-submission <- bind_cols(test 
-                        %>% select(id),
-                        amazon_predictions %>% 
-                          transmute(ACTION = .pred_1)) %>%
+submission <- bind_cols(
+  test %>% select(id),
+  amazon_predictions %>% transmute(ACTION = .pred_1)
+) %>%
   drop_na(ACTION)
-vroom_write(x=submission, file = "./Forest_amazon_preds.csv", delim = ",")
+
+vroom_write(x = submission, file = "./Forest_amazon_preds.csv", delim = ",")
 ```
 
 # KNN analysis
@@ -263,10 +268,68 @@ submission <- bind_cols(
   drop_na(ACTION)
 
 vroom_write(x = submission, file = "./KNN_amazon_preds.csv", delim = ",")
+
 ```
 
 # Bays Naive
 
 ```{r}
+library(tidymodels)
+library(discrim)
+library(embed)
+library(vroom)
+library(naivebayes)
+train <- train %>% mutate(ACTION = factor(ACTION, levels = c(1, 0)))
+
+my_recipe <- recipe(ACTION ~ ., data = train) %>%
+  step_mutate(across(all_predictors(), as.factor)) %>%   # only predictors
+  step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
+  step_novel(all_nominal_predictors(), new_level = "new") %>%
+  step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
+
+nb_model <- naive_Bayes(
+  Laplace    = tune(),
+  smoothness = tune()
+) %>%
+  set_mode("classification") %>%
+  set_engine("naivebayes")
+
+nb_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(nb_model)
+
+## Resamples (stratify by outcome)
+folds <- vfold_cv(train, v = 5, strata = ACTION)
+
+## Tuning grid (fixed smoothness syntax)
+tune_grid_nb <- grid_regular(
+  Laplace(range = c(0, 1)),
+  smoothness(range = c(0.1, 2)),
+  levels = 10
+)
+
+nb_res <- nb_wf %>%
+  tune_grid(
+    resamples = folds,
+    grid = tune_grid_nb,
+    metrics = metric_set(roc_auc)
+  )
+
+nb_best <- nb_res %>% select_best(metric = "roc_auc")
+
+nb_final_wf <- nb_wf %>%
+  finalize_workflow(nb_best) %>%
+  fit(data = train)
+
+## Predict on test
+nb_probs <- predict(nb_final_wf, new_data = test, type = "prob")
+
+submission <- bind_cols(
+  test %>% select(id),
+  nb_probs %>% transmute(ACTION = .pred_1)
+) %>%
+  drop_na(ACTION)
+
+vroom_write(x = submission, file = "./bayes_amazon_preds.csv", delim = ",")
 
 ```
