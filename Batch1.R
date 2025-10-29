@@ -16,8 +16,8 @@ cl <- makeCluster(n_cores)
 doParallel::registerDoParallel(cl)
 
 
-test  <- vroom("./AmazonEmployeAccess/amazon-employee-access-challenge/test.csv",  delim = ",")
-train <- vroom("./AmazonEmployeAccess/amazon-employee-access-challenge/train.csv", delim = ",")
+test  <- vroom("./amazon-employee-access-challenge/test.csv",  delim = ",")
+train <- vroom("./amazon-employee-access-challenge/train.csv", delim = ",")
 
 
 
