@@ -90,12 +90,7 @@ The following object is masked from ‘package:dials’:
 
 > library(remotes)
 > 
-> 
-> n_cores <- 15
-> cl <- makeCluster(n_cores)
-> doParallel::registerDoParallel(cl)
-> 
-> 
+> # read in data
 > test  <- vroom("./amazon-employee-access-challenge/test.csv",  delim = ",")
 Rows: 58921 Columns: 10
 ── Column specification ────────────────────────────────────────────────────────
@@ -113,127 +108,60 @@ dbl (10): ACTION, RESOURCE, MGR_ID, ROLE_ROLLUP_1, ROLE_ROLLUP_2, ROLE_DEPTN...
 ℹ Use `spec()` to retrieve the full column specification for this data.
 ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
 > 
-> 
-> 
-> # ── Dummy-encoding recipe (with <0.1% lumping). This is the one that matches your assignment. ──
-> my_recipe <- recipe(ACTION ~ ., data = train) %>%
-+   step_mutate(across(everything(), as.factor)) %>%
-+   step_other (all_nominal_predictors(), threshold = 0.001) %>%
-+   step_dummy (all_nominal_predictors())
-> 
-> 
-> 
-> # # prep & bake
-> # prep_obj    <- prep(my_recipe, training = train, verbose = TRUE)
-> # train_baked <- bake(prep_obj, new_data = train)
-> # ncol(train_baked)
-> # 
-> # 
-> # logregmodel <- logistic_reg() %>%
-> #   set_engine('glm')
-> # 
-> # log_wf <- workflow() %>%
-> #   add_recipe(my_recipe) %>%
-> #   add_model(logregmodel) %>%
-> #   fit(data = train)
-> # 
-> # amazon_predictions <- predict(log_wf,
-> #                               new_data=test,
-> #                               type="prob")
-> # 
-> # submission <- bind_cols(test
-> #                         %>% select(id),
-> #                         amazon_predictions %>%
-> #                           transmute(ACTION = .pred_1)) %>%
-> #   drop_na(ACTION)
-> # vroom_write(x=submission, file = "./Logistic_amazon_preds.csv", delim = ",")
-> # 
-> # 
-> # 
-> # 
-> # 
-> # # Penalized regression
-> # 
-> # my_recipe <- recipe(ACTION ~ ., data = train) %>%
-> #   step_mutate(across(everything(), as.factor)) %>%
-> #   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
-> #   step_novel(all_nominal_predictors(), new_level = "new") %>%
-> #   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
-> # 
-> # pen_model <- logistic_reg(mixture = tune(), penalty = tune()) %>%
-> #   set_engine('glmnet')
-> # 
-> # pen_wf <- workflow() %>%
-> #   add_recipe(my_recipe) %>%
-> #   add_model(pen_model)
-> # 
-> # tuning_grid <- grid_regular(penalty(),
-> #                             mixture(),
-> #                             levels = 10)
-> # 
-> # folds <- vfold_cv(train, v = 10, repeats = 1)
-> # 
-> # cv_results <- pen_wf %>%
-> #   tune_grid(resamples = folds,
-> #             grid = tuning_grid,
-> #             metrics = metric_set(roc_auc))
-> # 
-> # besttune <- cv_results %>%
-> #   select_best(metric = 'roc_auc')
-> # 
-> # final_wf <- pen_wf %>%
-> #   finalize_workflow(besttune) %>%
-> #   fit(data = train)
-> # 
-> # final_wf %>%
-> #   predict(new_data = test, type = "prob")
-> # 
-> # amazon_predictions <- predict(final_wf,
-> #                               new_data=test,
-> #                               type="prob")
-> # submission <- bind_cols(test
-> #                         %>% select(id),
-> #                         amazon_predictions %>%
-> #                           transmute(ACTION = .pred_1)) %>%
-> #   drop_na(ACTION)
-> # vroom_write(x=submission, file = "./Penalized_amazon_preds.csv", delim = ",")
-> 
-> 
-> 
-> 
-> # Random Forest Code
+> # The recipe
 > train <- train %>% mutate(ACTION = factor(ACTION, levels = c(1, 0)))
 > 
-> # (Optional but recommended) stratified CV so class imbalance doesn’t break folds
-> folds <- vfold_cv(train, v = 7, repeats = 1, strata = ACTION)
 > 
-> # 2) Recipe: do NOT turn everything into factors
-> my_recipe <- recipe(ACTION ~ ., data = train) %>%
-+   step_other(all_nominal_predictors(), threshold = 0.001, other = "other") %>%
-+   step_novel(all_nominal_predictors(), new_level = "new") %>%
-+   step_lencode_mixed(all_nominal_predictors(), outcome = vars(ACTION))
+> base_recipe <- recipe(ACTION ~ ., data = train) %>%
++   step_mutate(across(everything(), as.factor)) %>%
++   step_other (all_nominal_predictors(), threshold = 0.001) %>%
++   step_dummy (all_nominal_predictors()) %>% 
++   step_normalize(all_predictors())%>% 
++   step_pca(all_predictors(), threshold = .15)
 > 
-> forest_mod <- rand_forest(mtry = tune(),
-+                           min_n = tune(),
-+                           trees = 100) %>%
-+   set_engine("ranger") %>%
-+   set_mode("classification")
+> prep_obj <- prep(base_recipe, training = train, verbose = TRUE)
+oper 1 step mutate [training] 
+oper 2 step other [training] 
+oper 3 step dummy [training] 
+oper 4 step normalize [training] 
+oper 5 step pca [training] 
+The retained training set is ~ 9.63 Mb  in memory.
+
+> train_baked <- bake(prep_obj, new_data = train)
+> ncol(train_baked)
+[1] 39
 > 
-> forest_wf <- workflow() %>%
-+   add_recipe(my_recipe) %>%
-+   add_model(forest_mod)
 > 
-> # 3) Build a safe grid
-> # mtry must be <= # predictors after the recipe; keep your small demo grid but valid syntax
-> tuning_grid <- grid_regular(
-+   mtry(range = c(1, 9)),
-+   min_n(range = c(1, 9)),
+> 
+> 
+> 
+> # ---------- Resamples ----------
+> folds <- vfold_cv(train, v = 5, strata = ACTION)
+> 
+> # Optional tuning control
+> ctrl <- control_grid(save_pred = TRUE)
+> 
+> # =======================================================
+> # 1) Polynomial SVM
+> svmPoly <- svm_poly(degree = tune(), cost = tune()) %>%
++   set_mode("classification") %>%
++   set_engine("kernlab")
+> 
+> svmPoly_wf <- workflow() %>%
++   add_recipe(base_recipe) %>%
++   add_model(svmPoly)
+> 
+> grid_poly <- grid_regular(
++   degree(range = c(1, 3)),   # <- remove the L suffix
++   cost(),
 +   levels = 5
 + )
 > 
-> cv_results <- forest_wf %>%
-+   tune_grid(
-+     resamples = folds,
-+     grid = tuning_grid,
-+     metrics = metric_set(roc_auc)   # uses level "1" as event
-+   )
+> svmPoly_res <- svmPoly_wf %>%
++   tune_grid(resamples = folds, grid = grid_poly, metrics = metric_set(roc_auc, accuracy), control = ctrl)
+maximum number of iterations reached 0.001535323 0.001484624→ A | error:   NAs are not allowed in subscripted assignments
+There were issues with some computations   A: x1
+There were issues with some computations   A: x3
+maximum number of iterations reached 0.0001704839 0.0001696942There were issues with some computations   A: x6
+There were issues with some computations   A: x10
+maximum number of iterations reached 0.001471831 0.00142725There were issues with some computations   A: x15

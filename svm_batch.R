@@ -23,7 +23,7 @@ base_recipe <- recipe(ACTION ~ ., data = train) %>%
   step_other (all_nominal_predictors(), threshold = 0.001) %>%
   step_dummy (all_nominal_predictors()) %>% 
   step_normalize(all_predictors())%>% 
-  step_pca(all_predictors(), threshold = .5)
+  step_pca(all_predictors(), threshold = .15)
 
 prep_obj <- prep(base_recipe, training = train, verbose = TRUE)
 train_baked <- bake(prep_obj, new_data = train)
